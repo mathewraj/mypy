@@ -60,6 +60,8 @@ from mypy import experiments
 T = TypeVar('T')
 
 
+LAST_PASS = 1  # One less than the total number of passes (0 = first pass)
+
 # A node which is postponed to be type checked during the next pass.
 DeferredNode = NamedTuple(
     'DeferredNode',
@@ -143,7 +145,8 @@ class TypeChecker(NodeVisitor[Type]):
         self.current_node_deferred = False
         self.module_refs = set()
 
-    def visit_file(self, file_node: MypyFile, path: str, options: Options) -> None:
+    def visit_file(self, file_node: MypyFile, path: str, options: Options,
+                   deferred_nodes: Optional[List[DeferredNode]]) -> List[DeferredNode]:
         """Type check a mypy file with the given path."""
         self.options = options
         self.pass_num = 0
@@ -161,40 +164,49 @@ class TypeChecker(NodeVisitor[Type]):
                                                 for pattern
                                                 in self.options.strict_optional_whitelist)
 
-        for d in file_node.defs:
-            self.accept(d)
+        if deferred_nodes is None:
+            for d in file_node.defs:
+                self.accept(d)
 
-        self.leave_partial_types()
+            self.leave_partial_types()
 
-        if self.deferred_nodes:
+            self.current_node_deferred = False  # XXX needed?
+
+            all_ = self.globals.get('__all__')
+            if all_ is not None and all_.type is not None:
+                seq_str = self.named_generic_type('typing.Sequence',
+                                                  [self.named_type('builtins.str')])
+                if not is_subtype(all_.type, seq_str):
+                    str_seq_s, all_s = self.msg.format_distinctly(seq_str, all_.type)
+                    self.fail(messages.ALL_MUST_BE_SEQ_STR.format(str_seq_s, all_s),
+                              all_.node)
+
+        else:
+            self.deferred_nodes = deferred_nodes
             self.check_second_pass()
-
-        self.current_node_deferred = False
-
-        all_ = self.globals.get('__all__')
-        if all_ is not None and all_.type is not None:
-            seq_str = self.named_generic_type('typing.Sequence',
-                                              [self.named_type('builtins.str')])
-            if not is_subtype(all_.type, seq_str):
-                str_seq_s, all_s = self.msg.format_distinctly(seq_str, all_.type)
-                self.fail(messages.ALL_MUST_BE_SEQ_STR.format(str_seq_s, all_s),
-                          all_.node)
+            self.current_node_deferred = False  # XXX needed?
 
         del self.options
 
+        deferred_nodes = self.deferred_nodes
+        self.deferred_nodes = []
+        return deferred_nodes
+
     def check_second_pass(self) -> None:
         """Run second pass of type checking which goes through deferred nodes."""
-        self.pass_num = 1
-        for node, type_name in self.deferred_nodes:
+        assert self.pass_num < LAST_PASS
+        self.pass_num += 1
+        deferred_nodes = self.deferred_nodes
+        self.deferred_nodes = []
+        for node, type_name in deferred_nodes:
             if type_name:
                 self.errors.push_type(type_name)
             self.accept(node)
             if type_name:
                 self.errors.pop_type()
-        self.deferred_nodes = []
 
     def handle_cannot_determine_type(self, name: str, context: Context) -> None:
-        if self.pass_num == 0 and self.function_stack:
+        if self.pass_num < LAST_PASS and self.function_stack:
             # Don't report an error yet. Just defer.
             node = self.function_stack[-1]
             if self.errors.type_name:

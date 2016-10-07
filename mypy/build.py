@@ -1412,7 +1412,23 @@ class State:
         if self.options.semantic_analysis_only:
             return
         with self.wrap_context():
-            manager.type_checker.visit_file(self.tree, self.xpath, self.options)
+            self.deferred_nodes = manager.type_checker.visit_file(self.tree, self.xpath,
+                                                                  self.options, None)
+
+    def second_pass(self) -> None:
+        manager = self.manager
+        if self.options.semantic_analysis_only:
+            return
+        with self.wrap_context():
+            if self.deferred_nodes:
+                manager.log('Deferred nodes for %s (%d total):' %
+                            (self.xpath, len(self.deferred_nodes)))
+                for node, type_name in self.deferred_nodes:
+                    manager.log('  -', node.fullname() or node.name(),
+                                '(in %s)' % type_name if type_name else '')
+            self.deferred_nodes = manager.type_checker.visit_file(self.tree, self.xpath,
+                                                                  self.options,
+                                                                  self.deferred_nodes)
 
             if self.options.incremental:
                 self._patch_indirect_dependencies(manager.type_checker.module_refs)
@@ -1727,6 +1743,9 @@ def process_stale_scc(graph: Graph, scc: List[str]) -> None:
         graph[id].semantic_analysis_pass_three()
     for id in scc:
         graph[id].type_check()
+    for id in scc:
+        graph[id].second_pass()
+    for id in scc:
         graph[id].write_cache()
         graph[id].mark_as_rechecked()
 
