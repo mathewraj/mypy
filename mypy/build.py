@@ -1412,8 +1412,12 @@ class State:
         if self.options.semantic_analysis_only:
             return
         with self.wrap_context():
+            manager.type_checker.module_refs = set()  # XXX Hack
+            manager.type_checker.module_type_map = {}  # XXX Hack
             self.deferred_nodes = manager.type_checker.visit_file(self.tree, self.xpath,
                                                                   self.options, None)
+            self.module_refs = manager.type_checker.module_refs  # XXX Hack
+            self.module_type_map = manager.type_checker.module_type_map  # XXX Hack
 
     def second_pass(self) -> None:
         manager = self.manager
@@ -1426,6 +1430,8 @@ class State:
                 for node, type_name in self.deferred_nodes:
                     manager.log('  -', node.fullname() or node.name(),
                                 '(in %s)' % type_name if type_name else '')
+            manager.type_checker.module_refs = self.module_refs  # XXX Hack
+            manager.type_checker.module_type_map = self.module_type_map  # XXX Hack
             self.deferred_nodes = manager.type_checker.visit_file(self.tree, self.xpath,
                                                                   self.options,
                                                                   self.deferred_nodes)

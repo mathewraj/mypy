@@ -155,8 +155,6 @@ class TypeChecker(NodeVisitor[Type]):
         self.globals = file_node.names
         self.enter_partial_types()
         self.is_typeshed_stub = self.errors.is_typeshed_file(path)
-        self.module_type_map = {}
-        self.module_refs = set()
         if self.options.strict_optional_whitelist is None:
             self.suppress_none_errors = not self.options.show_none_errors
         else:
